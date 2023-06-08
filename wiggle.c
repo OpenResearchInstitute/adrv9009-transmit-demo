@@ -4,10 +4,10 @@
 
 const double time_per_sample = 1.0 / 273000;  // OPV_RPC sample rate
 
-const double wiggle_freq = 0.1;       // 10 second period sweeping tone back and forth
-const double wiggle_extent = 20e3;    // plus-and-minus 20 kHz sweep
+#define wiggle_freq (0.1)        // 10 second period sweeping tone back and forth
+#define wiggle_extent (20e3)     // plus-and-minus 20 kHz sweep
 
-double wiggle_radians_per_sample = 2 * M_PI * wiggle_freq * time_per_sample;
+#define wiggle_radians_per_sample (2.0 * M_PI * wiggle_freq * time_per_sample)
 
 void next_tx_sample(int16_t * const i_sample, int16_t * const q_sample)
 {

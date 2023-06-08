@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * based on libiio - AD9361 IIO streaming example
+ * based on libiio - ADRV9009 IIO streaming example
  *
  * Copyright (C) 2014 IABG mbH
  * Author: Michael Feilen <feilen_at_iabg.de>
+ * Copyright (C) 2019 Analog Devices Inc.
+ * Copyright (C) 2023 Open Research Institute
  **/
 
 #include <stdbool.h>
@@ -39,10 +41,7 @@ enum iodev { RX, TX };
 
 /* common RX and TX streaming params */
 struct stream_cfg {
-	long long bw_hz; // Analog bandwidth in Hz
-	long long fs_hz; // Baseband sample rate in Hz
 	long long lo_hz; // Local oscillator frequency in Hz
-	const char* rfport; // Port name
 };
 
 /* static scratch mem for strings */
@@ -86,7 +85,7 @@ static void handle_sig(int sig)
 
 /* check return value of iio_attr_write function (for whole device) */
 static void errchk_dev(int v) {
-	if (v < 0) { fprintf(stderr, "Error %d writing to IIO device\n"); shutdown(); }
+	if (v < 0) { fprintf(stderr, "Error %d writing to IIO device\n", v); shutdown(); }
 }
 
 /* check return value of iio_channel_attr_write function */
@@ -100,10 +99,30 @@ static void wr_ch_lli(struct iio_channel *chn, const char* what, long long val)
 	errchk_chn(iio_channel_attr_write_longlong(chn, what, val), what);
 }
 
+/* write attribute: long long int */
+static long long rd_ch_lli(struct iio_channel *chn, const char* what)
+{
+	long long val;
+
+	errchk_chn(iio_channel_attr_read_longlong(chn, what, &val), what);
+
+	printf("\t %s: %lld\n", what, val);
+	return val;
+}
+
+#if 0
 /* write attribute: string */
 static void wr_ch_str(struct iio_channel *chn, const char* what, const char* str)
 {
 	errchk_chn(iio_channel_attr_write(chn, what, str), what);
+}
+#endif
+
+/* helper function generating channel names */
+static char* get_ch_name_mod(const char* type, int id, char modify)
+{
+	snprintf(tmpstr, sizeof(tmpstr), "%s%d_%c", type, id, modify);
+	return tmpstr;
 }
 
 /* helper function generating channel names */
@@ -113,54 +132,51 @@ static char* get_ch_name(const char* type, int id)
 	return tmpstr;
 }
 
-/* returns ad9361 phy device */
-static struct iio_device* get_ad9361_phy(void)
+/* returns adrv9009 phy device */
+static struct iio_device* get_adrv9009_phy(void)
 {
-	struct iio_device *dev =  iio_context_find_device(ctx, "ad9361-phy");
-	IIO_ENSURE(dev && "No ad9361-phy found");
+	struct iio_device *dev =  iio_context_find_device(ctx, "adrv9009-phy");
+	IIO_ENSURE(dev && "No adrv9009-phy found");
 	return dev;
 }
 
-/* finds AD9361 streaming IIO devices */
-static bool get_ad9361_stream_dev(enum iodev d, struct iio_device **dev)
+/* finds ADRV9009 streaming IIO devices */
+static bool get_adrv9009_stream_dev(enum iodev d, struct iio_device **dev)
 {
 	switch (d) {
-	case TX: *dev = iio_context_find_device(ctx, "cf-ad9361-dds-core-lpc"); return *dev != NULL;
-	case RX: *dev = iio_context_find_device(ctx, "cf-ad9361-lpc");  return *dev != NULL;
+	case TX: *dev = iio_context_find_device(ctx, "axi-adrv9009-tx-hpc"); return *dev != NULL;
+	case RX: *dev = iio_context_find_device(ctx, "axi-adrv9009-rx-hpc");  return *dev != NULL;
 	default: IIO_ENSURE(0); return false;
 	}
 }
 
-/* finds AD9361 streaming IIO channels */
-static bool get_ad9361_stream_ch(enum iodev d, struct iio_device *dev, int chid, struct iio_channel **chn)
+/* finds ADRV9009 streaming IIO channels */
+static bool get_adrv9009_stream_ch(enum iodev d, struct iio_device *dev, int chid, char modify, struct iio_channel **chn)
 {
-	*chn = iio_device_find_channel(dev, get_ch_name("voltage", chid), d == TX);
+	*chn = iio_device_find_channel(dev, modify ? get_ch_name_mod("voltage", chid, modify) : get_ch_name("voltage", chid), d == TX);
 	if (!*chn)
-		*chn = iio_device_find_channel(dev, get_ch_name("altvoltage", chid), d == TX);
+		*chn = iio_device_find_channel(dev, modify ? get_ch_name_mod("voltage", chid, modify) : get_ch_name("voltage", chid), d == TX);
 	return *chn != NULL;
 }
 
-/* finds AD9361 phy IIO configuration channel with id chid */
+/* finds ADRV9009 phy IIO configuration channel with id chid */
 static bool get_phy_chan(enum iodev d, int chid, struct iio_channel **chn)
 {
 	switch (d) {
-	case RX: *chn = iio_device_find_channel(get_ad9361_phy(), get_ch_name("voltage", chid), false); return *chn != NULL;
-	case TX: *chn = iio_device_find_channel(get_ad9361_phy(), get_ch_name("voltage", chid), true);  return *chn != NULL;
+	case RX: *chn = iio_device_find_channel(get_adrv9009_phy(), get_ch_name("voltage", chid), false); return *chn != NULL;
+	case TX: *chn = iio_device_find_channel(get_adrv9009_phy(), get_ch_name("voltage", chid), true);  return *chn != NULL;
 	default: IIO_ENSURE(0); return false;
 	}
 }
 
-/* finds AD9361 local oscillator IIO configuration channels */
-static bool get_lo_chan(enum iodev d, struct iio_channel **chn)
+/* finds ADRV9009 local oscillator IIO configuration channels */
+static bool get_lo_chan(struct iio_channel **chn)
 {
-	switch (d) {
 	 // LO chan is always output, i.e. true
-	case RX: *chn = iio_device_find_channel(get_ad9361_phy(), get_ch_name("altvoltage", 0), true); return *chn != NULL;
-	case TX: *chn = iio_device_find_channel(get_ad9361_phy(), get_ch_name("altvoltage", 1), true); return *chn != NULL;
-	default: IIO_ENSURE(0); return false;
-	}
+	*chn = iio_device_find_channel(get_adrv9009_phy(), get_ch_name("altvoltage", 0), true); return *chn != NULL;
 }
 
+#if 0		// for Pluto only
 /* finds AD9361 decimation/interpolation configuration channels */
 // !!! not tested for receive decimation
 static bool get_dec8_int8_chan(enum iodev d, struct iio_channel **chn)
@@ -277,42 +293,28 @@ static bool set_tx_sample_rate(struct iio_channel *phy_chn, long long sample_rat
 
 	return true;
 }
+#endif
 
 /* applies streaming configuration through IIO */
-bool cfg_ad9361_streaming_ch(struct stream_cfg *cfg, enum iodev type, int chid)
+bool cfg_adrv9009_streaming_ch(struct stream_cfg *cfg, int chid)
 {
 	struct iio_channel *chn = NULL;
-	struct iio_channel *chn2 = NULL;
 
 	// Configure phy and lo channels
-	printf("* Acquiring AD9361 phy channel %d\n", chid);
-	if (!get_phy_chan(type, chid, &chn)) {	return false; }
-	wr_ch_str(chn, "rf_port_select",     cfg->rfport);
-	wr_ch_lli(chn, "rf_bandwidth",       cfg->bw_hz);
-	if (type == TX) {
-		if (!set_tx_sample_rate(chn, cfg->fs_hz)) { return false; }
-	}
+	printf("* Acquiring ADRV9009 phy channel %d\n", chid);
+	if (!get_phy_chan(true, chid, &chn)) {	return false; }
+
+	// rd_ch_lli(chn, "rf_bandwidth");
+	// rd_ch_lli(chn, "sampling frequency");
 
 	// Configure LO channel
-	printf("* Acquiring AD9361 %s lo channel\n", type == TX ? "TX" : "RX");
-	if (!get_lo_chan(type, &chn2)) { return false; }
-	wr_ch_lli(chn2, "frequency", cfg->lo_hz);
+	printf("* Acquiring ADRV9009 TRX lo channel\n");
+	if (!get_lo_chan(&chn)) { return false; }
+	wr_ch_lli(chn, "frequency", cfg->lo_hz);
 	return true;
 }
 
-/* turns off the transmit local oscillator
- *
- * This eliminates L.O. leakage through the antenna.
- */
-static bool cfg_ad9361_txlo_powerdown(long long val)
-{
-	struct iio_channel *chn = NULL;
-	
-	if (!get_lo_chan(TX, &chn)) { return false; }
-	wr_ch_lli(chn, "powerdown", val);
-	return true;
-}
-
+#if 0	// just for Pluto?
 /* adjusts single-ended crystal oscillator compensation for Pluto SDR */
 static bool cfg_ad9361_xo_correction(int delta)
 {
@@ -324,6 +326,7 @@ static bool cfg_ad9361_manual_tx_quad(void)
 {
 	errchk_dev(iio_device_attr_write(get_ad9361_phy(), "calib_mode", "manual_tx_quad"));
 }
+#endif
 
 /* simple configuration and streaming */
 /* usage:
@@ -347,24 +350,14 @@ int main (int argc, char **argv)
 	char *p_dat, *p_end;
 	ptrdiff_t p_inc;
 
-	// Stream configurations
-//	struct stream_cfg rxcfg;
-	struct stream_cfg txcfg;
+	// Stream configuration
+	struct stream_cfg trxcfg;
 
 	// Listen to ctrl+c and IIO_ENSURE
 	signal(SIGINT, handle_sig);
 
-	// RX stream config
-//	rxcfg.bw_hz = MHZ(2);   // 2 MHz rf bandwidth
-//	rxcfg.fs_hz = MHZ(2.5);   // 2.5 MS/s rx sample rate
-//	rxcfg.lo_hz = GHZ(2.5); // 2.5 GHz rf frequency
-//	rxcfg.rfport = "A_BALANCED"; // port A (select for rf freq.)
-
-	// TX stream config
-	txcfg.bw_hz = 200000;	// 200 kHz RF bandwidth, Pluto's minimum
-	txcfg.fs_hz = SAMPLES_PER_SECOND;	// baseband sample rate
-	txcfg.lo_hz = MHZ(905.05);	// 905.05 MHz RF frequency
-	txcfg.rfport = "A"; // port A (select for rf freq.)
+	// TRX stream config
+	trxcfg.lo_hz = MHZ(905.05);	// 905.05 MHz RF frequency
 
 	printf("* Acquiring IIO context\n");
 	if (argc == 1) {
@@ -374,8 +367,9 @@ int main (int argc, char **argv)
 		IIO_ENSURE((ctx = iio_create_context_from_uri(argv[1])) && "No context");
 	}
 	IIO_ENSURE(iio_context_get_devices_count(ctx) > 0 && "No devices");
-	unsigned int attrs_count = iio_context_get_attrs_count(ctx);
-	IIO_ENSURE(attrs_count > 0 && "No context attributes");
+
+	//unsigned int attrs_count = iio_context_get_attrs_count(ctx);
+	//IIO_ENSURE(attrs_count > 0 && "No context attributes");
 	// printf("Found IIO context:\n");
 	// for (unsigned int index=0; index < attrs_count; index++) {
 	// 	const char *attr_name;
@@ -385,24 +379,24 @@ int main (int argc, char **argv)
 	// 	}
 	// }
 
-	printf("* Acquiring AD9361 streaming devices\n");
-	IIO_ENSURE(get_ad9361_stream_dev(TX, &tx) && "No tx dev found");
-//	IIO_ENSURE(get_ad9361_stream_dev(RX, &rx) && "No rx dev found");
+	printf("* Acquiring ADRV9009 streaming devices\n");
+	IIO_ENSURE(get_adrv9009_stream_dev(TX, &tx) && "No tx dev found");
+//	IIO_ENSURE(get_adrv9009_stream_dev(RX, &rx) && "No rx dev found");
 
+#if 0		// only for Pluto
 	printf("* Configuring Pluto SDR for transmitting\n");
 	cfg_ad9361_manual_tx_quad();	// disable automatic TX calibration
 	cfg_ad9361_xo_correction(-465);	// -465 out of 40e6 for remote lab's Pluto S/N b83991001015001f00c7a0653f04
-	cfg_ad9361_txlo_powerdown(0);	// enable transmit LO
+#endif
 
-	printf("* Configuring AD9361 for streaming\n");
-//	IIO_ENSURE(cfg_ad9361_streaming_ch(&rxcfg, RX, 0) && "RX port 0 not found");
-	IIO_ENSURE(cfg_ad9361_streaming_ch(&txcfg, TX, 0) && "TX port 0 not found");
+	printf("* Configuring ADRV9009 for streaming\n");
+	IIO_ENSURE(cfg_adrv9009_streaming_ch(&trxcfg, 0) && "TRX device not found");
 
-	printf("* Initializing AD9361 IIO streaming channels\n");
-//	IIO_ENSURE(get_ad9361_stream_ch(RX, rx, 0, &rx0_i) && "RX chan i not found");
-//	IIO_ENSURE(get_ad9361_stream_ch(RX, rx, 1, &rx0_q) && "RX chan q not found");
-	IIO_ENSURE(get_ad9361_stream_ch(TX, tx, 0, &tx0_i) && "TX chan i not found");
-	IIO_ENSURE(get_ad9361_stream_ch(TX, tx, 1, &tx0_q) && "TX chan q not found");
+	printf("* Initializing ADRV9009 IIO streaming channels\n");
+//	IIO_ENSURE(get_adrv9009_stream_ch(RX, rx, 0, 'i', &rx0_i) && "RX chan i not found");
+//	IIO_ENSURE(get_adrv9009_stream_ch(RX, rx, 0, 'q', &rx0_q) && "RX chan q not found");
+	IIO_ENSURE(get_adrv9009_stream_ch(TX, tx, 0, 0, &tx0_i) && "TX chan i not found");
+	IIO_ENSURE(get_adrv9009_stream_ch(TX, tx, 1, 0, &tx0_q) && "TX chan q not found");
 
 	printf("* Enabling IIO streaming channels\n");
 //	iio_channel_enable(rx0_i);
@@ -410,8 +404,6 @@ int main (int argc, char **argv)
 	iio_channel_enable(tx0_i);
 	iio_channel_enable(tx0_q);
 	
-//	cfg_ad9361_txlo_powerdown(1);	// !!! try to suppress noise burst
-
 	printf("* Creating non-cyclic IIO buffers of %d samples (1 40ms frame)\n", SAMPLES_PER_40MS);
 //	rxbuf = iio_device_create_buffer(rx, 1024*1024, false);
 //	if (!rxbuf) {
@@ -432,8 +424,6 @@ int main (int argc, char **argv)
 			((int16_t*)p_dat)[0] = 0 << 4; // Real (I)
 			((int16_t*)p_dat)[1] = 0 << 4; // Imag (Q)
 		}
-
-//	cfg_ad9361_txlo_powerdown(0);
 
 	printf("* Starting IO streaming (press CTRL+C to cancel)\n");
 	while (!stop)
@@ -464,10 +454,10 @@ int main (int argc, char **argv)
 		p_end = iio_buffer_end(txbuf);
 		for (p_dat = (char *)iio_buffer_first(txbuf, tx0_i); p_dat < p_end; p_dat += p_inc) {
 			// Example: fill with zeros
-			// 12-bit sample needs to be MSB aligned so shift by 4
+			// 14-bit sample needs to be MSB aligned so shift by 4
 			// https://wiki.analog.com/resources/eval/user-guides/ad-fmcomms2-ebz/software/basic_iq_datafiles#binary_format
-			//((int16_t*)p_dat)[0] = 0 << 4; // Real (I)
-			//((int16_t*)p_dat)[1] = 0 << 4; // Imag (Q)
+			//((int16_t*)p_dat)[0] = 0 << 2; // Real (I)
+			//((int16_t*)p_dat)[1] = 0 << 2; // Imag (Q)
 			next_tx_sample((int16_t*)p_dat, (int16_t*)(p_dat+2));
 //			printf("%d %d\n", ((int16_t*)p_dat)[0], ((int16_t*)p_dat)[1]);
 		}
@@ -476,11 +466,8 @@ int main (int argc, char **argv)
 		// nrx += nbytes_rx / iio_device_get_sample_size(rx);
 		ntx += nbytes_tx / iio_device_get_sample_size(tx);
 		printf("\tRX %8.2f MSmp, TX %8.2f MSmp\n", nrx/1e6, ntx/1e6);
-		
-		// if (ntx > 6e6) cfg_ad9361_txlo_powerdown(0);	// delayed start
 	}
 
-	cfg_ad9361_txlo_powerdown(1);
 	shutdown();
 
 	return 0;
