@@ -12,6 +12,7 @@ The code is based on the 2022.2 branch example code adrv9009-stream.c. The platf
 
 ## Experiments and Current Status
 
+- [ ]  Establish version control in this GitHub folder.
 - [x]  The original example code was built and run. 
 - [x]  The transmit-all-zeros were replaced with randomly selected numbers and a carrier observed.
 - [ ]  wiggle.c demonstration was attempted. The sampling frequency was updated, but the signals did not match the Pluto demonstration. 
