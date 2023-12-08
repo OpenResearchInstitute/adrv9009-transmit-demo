@@ -1,6 +1,6 @@
 # Challenge Coin
 
-This 2022.2 versioned Vitis project transmits tones for a single channel Opulent Voice demonstration. 
+This 2022.2 versioned Vitis project transmits tones for a single channel Opulent Voice demonstration on the zc706 + adrv9009.
 
 ## Vitis IDE GitHub Integration
 
